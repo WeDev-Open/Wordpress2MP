@@ -198,6 +198,139 @@ class Wechat_Sync_Provider {
         $new_content = str_replace('<?xml encoding="utf-8" ?>', '', $new_content);
         return $new_content;
     }
+
+    private static function process_images_in_content_regex($post_id, $content, $token) {
+        if (!$content) return $content;
+        $debug = get_option('wechat_sync_debug_images', '0') === '1';
+        $map = [];
+        $out = preg_replace_callback('/<img\b[^>]*>/i', function($m) use ($post_id, $token, $debug, &$map) {
+            $tag = $m[0];
+            $attrs = [];
+            if (preg_match_all('/([a-zA-Z0-9_:\-]+)\s*=\s*(\"[^\"]*\"|\'[^\']*\'|[^\s>]+)/', $tag, $mm, PREG_SET_ORDER)) {
+                foreach ($mm as $kv) {
+                    $name = strtolower($kv[1]);
+                    $val = $kv[2];
+                    $q = substr($val, 0, 1);
+                    if ($q === '"' || $q === "'") { $val = substr($val, 1, -1); }
+                    $attrs[$name] = $val;
+                }
+            }
+            $src = isset($attrs['src']) ? $attrs['src'] : '';
+            $data_src = isset($attrs['data-src']) ? $attrs['data-src'] : '';
+            $data_original = isset($attrs['data-original']) ? $attrs['data-original'] : '';
+            $data_actualsrc = isset($attrs['data-actualsrc']) ? $attrs['data-actualsrc'] : '';
+            $data_lazy_src = isset($attrs['data-lazy-src']) ? $attrs['data-lazy-src'] : '';
+            $srcset_val = isset($attrs['srcset']) ? $attrs['srcset'] : '';
+            $candidate = '';
+            if ($data_src) $candidate = $data_src; else if ($data_original) $candidate = $data_original; else if ($data_actualsrc) $candidate = $data_actualsrc; else if ($data_lazy_src) $candidate = $data_lazy_src;
+            if (!$candidate || strpos($candidate, 'data:') === 0) { $candidate = $src; }
+            if ((!$candidate || strpos($candidate, 'data:') === 0 || preg_match('/\.svg(\?|$)/i', $candidate)) && $srcset_val) {
+                $best = '';
+                $bestw = 0;
+                $list = explode(',', $srcset_val);
+                foreach ($list as $entry) {
+                    $entry = trim($entry);
+                    if (!$entry) continue;
+                    $parts = preg_split('/\s+/', $entry);
+                    $u = $parts[0];
+                    $w = 0;
+                    foreach ($parts as $pp) {
+                        if (preg_match('/^(\d+)w$/', $pp, $mm2)) { $w = intval($mm2[1]); }
+                        else if (preg_match('/^(\d+)x$/', $pp, $mm3)) { $w = max($w, intval($mm3[1]) * 1000); }
+                    }
+                    if ($w >= $bestw) { $best = $u; $bestw = $w; }
+                }
+                if ($best) { $candidate = $best; }
+            }
+            $raw = $candidate;
+            $candidate = self::sanitize_candidate_url($candidate);
+            if ($debug) {
+                $msg = '解析图片地址 candidate:' . $candidate . ' raw:' . $raw . ' src:' . $src . ' data-src:' . $data_src . ' data-original:' . $data_original . ' srcset:' . ($srcset_val ? '[有]' : '[无]');
+                Wechat_Sync_Logger::log_info($post_id, $msg, 'uploadimg');
+            }
+            if (!$candidate) return $tag;
+            if (isset($map[$candidate])) {
+                $uploaded = $map[$candidate];
+            } else {
+                $norm = $candidate;
+                if (strpos($norm, '://') === false) {
+                    if (substr($norm, 0, 2) === '//') { $norm = (is_ssl() ? 'https:' : 'http:') . $norm; }
+                    else { $norm = (substr($norm, 0, 1) === '/') ? home_url($norm) : home_url('/' . ltrim($norm, '/')); }
+                }
+                $attachment_id = attachment_url_to_postid($norm);
+                $file = '';
+                $tmp = '';
+                if ($attachment_id) {
+                    $file = get_attached_file($attachment_id);
+                    if ($file && file_exists($file)) {
+                        $mime0 = self::get_mime($file);
+                        if ($mime0 === 'image/svg+xml') {
+                            Wechat_Sync_Logger::log_error($post_id, '跳过SVG附件 URL:' . $norm, 'uploadimg', 0, '警告');
+                            return $tag;
+                        }
+                        $normed = self::normalize_image_for_upload($file, 'uploadimg');
+                        if (is_wp_error($normed)) {
+                            Wechat_Sync_Logger::log_error($post_id, $normed->get_error_message() . ' URL:' . $norm, 'uploadimg', 0, '警告');
+                            return $tag;
+                        }
+                        if (is_string($normed) && file_exists($normed)) { $file = $normed; }
+                    }
+                } else {
+                    $tmp = self::fetch_image_to_temp($norm);
+                    if (is_wp_error($tmp)) {
+                        Wechat_Sync_Logger::log_error($post_id, $tmp->get_error_message(), 'uploadimg', 0, '警告');
+                        return $tag;
+                    } else if (file_exists($tmp)) {
+                        $mime1 = self::get_mime($tmp);
+                        if ($mime1 === 'image/svg+xml') {
+                            Wechat_Sync_Logger::log_error($post_id, '跳过SVG URL:' . $norm, 'uploadimg', 0, '警告');
+                            @unlink($tmp);
+                            return $tag;
+                        }
+                        $normed = self::normalize_image_for_upload($tmp, 'uploadimg');
+                        if (is_wp_error($normed)) {
+                            Wechat_Sync_Logger::log_error($post_id, $normed->get_error_message() . ' URL:' . $norm, 'uploadimg', 0, '警告');
+                            @unlink($tmp);
+                            return $tag;
+                        }
+                        if (is_string($normed) && file_exists($normed)) { $file = $normed; } else { $file = $tmp; }
+                    }
+                }
+                if (!$file || !file_exists($file)) return $tag;
+                $uploaded = self::upload_content_image($file, $token);
+                if (is_wp_error($uploaded)) {
+                    Wechat_Sync_Logger::log_error($post_id, $uploaded->get_error_message() . ' URL:' . $norm, 'uploadimg', 0, '警告');
+                    if (!$attachment_id) {
+                        if ($tmp && file_exists($tmp)) @unlink($tmp);
+                        if (isset($normed) && $normed && file_exists($normed) && $normed !== $tmp) @unlink($normed);
+                    }
+                    return $tag;
+                }
+                if (!$attachment_id) {
+                    if ($tmp && file_exists($tmp)) @unlink($tmp);
+                    if (isset($normed) && $normed && file_exists($normed) && $normed !== $tmp) @unlink($normed);
+                }
+                $map[$candidate] = $uploaded;
+            }
+            $new = $tag;
+            $new = preg_replace('/\s+srcset\s*=\s*(\"[^\"]*\"|\'[^\']*\'|[^\s>]+)/i', '', $new);
+            $new = preg_replace('/\s+data\-(src|original|actualsrc|lazy\-src|lazyload|lazy)\s*=\s*(\"[^\"]*\"|\'[^\']*\'|[^\s>]+)/i', '', $new);
+            if (preg_match('/\bsrc\s*=\s*(\"[^\"]*\"|\'[^\']*\'|[^\s>]+)/i', $new)) {
+                $new = preg_replace('/\bsrc\s*=\s*(\"[^\"]*\"|\'[^\']*\'|[^\s>]+)/i', ' src="' . $map[$candidate] . '"', $new);
+            } else {
+                $new = preg_replace('/<img\b/i', '<img src="' . $map[$candidate] . '"', $new, 1);
+            }
+            if (!preg_match('/\balt\s*=\s*(\"[^\"]*\"|\'[^\']*\'|[^\s>]+)/i', $new)) {
+                $bn = basename(parse_url($candidate, PHP_URL_PATH));
+                $bn = preg_replace('/\.[^.]+$/', '', $bn);
+                $alt = $bn ? $bn : get_bloginfo('name');
+                $new = preg_replace('/>$/', ' alt="' . $alt . '">', $new);
+                $new = preg_replace('/\/>$/', ' alt="' . $alt . '"/>', $new);
+            }
+            return $new;
+        }, $content);
+        return $out;
+    }
     public static function upload_thumb($attachment_id, $token, $force = false) {
         $appid = trim((string)get_option('wechat_sync_appid', ''));
         $key = 'wechat_thumb_media_id_' . md5($appid);
@@ -241,14 +374,25 @@ class Wechat_Sync_Provider {
         $title = self::clamp_text($title, 128);
         $author = self::clamp_text($author, 32);
         $digest = self::clamp_text($digest, 512);
-        $content = apply_filters('the_content', $post->post_content);
-        $content = wp_kses_post($content);
-        $stats = self::analyze_quote_entities($content);
-        if ($stats) { Wechat_Sync_Logger::log_info($post_id, $stats, 'content'); }
-        if (get_option('wechat_sync_process_images', '0') === '1') {
-            $content = self::process_images_in_content($post_id, $content, $token);
-            if (is_wp_error($content)) return $content;
+        $passthrough = get_option('wechat_sync_passthrough', '0') === '1';
+        $use_regex = get_option('wechat_sync_use_regex', '0') === '1';
+        if ($passthrough) {
+            $content = $post->post_content;
         } else {
+            $content = apply_filters('the_content', $post->post_content);
+            $content = wp_kses_post($content);
+            $stats = self::analyze_quote_entities($content);
+            if ($stats) { Wechat_Sync_Logger::log_info($post_id, $stats, 'content'); }
+            if (get_option('wechat_sync_process_images', '0') === '1') {
+                if ($use_regex) {
+                    $content = self::process_images_in_content_regex($post_id, $content, $token);
+                } else {
+                    $content = self::process_images_in_content($post_id, $content, $token);
+                }
+                if (is_wp_error($content)) return $content;
+            } else {
+                $content = self::decode_entities_in_html($content);
+            }
             $content = self::decode_entities_in_html($content);
         }
         $source = get_permalink($post);
@@ -563,7 +707,7 @@ class Wechat_Sync_Provider {
 
     private static function find_first_image_url_in_html($html) {
         if (!is_string($html) || $html === '') return '';
-        if (!class_exists('DOMDocument')) {
+        if (get_option('wechat_sync_use_regex', '0') === '1' || !class_exists('DOMDocument')) {
             $m = [];
             if (preg_match('/<img[^>]+(data-src|data-original|data-actualsrc|data-lazy-src|src)\s*=\s*\"([^\"]+)\"/i', $html, $m)) {
                 $cand = $m[2];
@@ -628,6 +772,7 @@ class Wechat_Sync_Provider {
         self::decode_named_entities_dom($dom);
         $new = $dom->saveHTML();
         $new = str_replace('<?xml encoding="utf-8" ?>', '', $new);
+        $new = self::decode_quote_entities_str($new);
         return $new;
     }
 
@@ -679,7 +824,8 @@ class Wechat_Sync_Provider {
         for ($i = 0; $i < 3; $i++) {
             $prev = $s;
             $s = str_replace($keys, $vals, $s);
-            $amp = array_map(function($k){ return '&amp;' . $k; }, $keys);
+            $s = str_replace(['&#8220;','&#8221;','&#8216;','&#8217;','&#34;','&#39;'], $vals, $s);
+            $amp = array_map(function($k){ return '&amp;' . substr($k, 1); }, $keys);
             $s = str_replace($amp, $vals, $s);
             if ($s === $prev) break;
         }

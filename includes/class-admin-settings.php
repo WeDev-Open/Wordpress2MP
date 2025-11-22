@@ -11,6 +11,8 @@ class Wechat_Sync_Admin_Settings {
         register_setting('wechat_sync_settings', 'wechat_sync_use_first_image');
         register_setting('wechat_sync_settings', 'wechat_sync_process_images');
         register_setting('wechat_sync_settings', 'wechat_sync_debug_images');
+        register_setting('wechat_sync_settings', 'wechat_sync_passthrough');
+        register_setting('wechat_sync_settings', 'wechat_sync_use_regex');
         register_setting('wechat_sync_settings', 'wechat_sync_digest_length');
         register_setting('wechat_sync_settings', 'wechat_sync_author_source');
         register_setting('wechat_sync_settings', 'wechat_sync_author_custom');
@@ -30,6 +32,8 @@ class Wechat_Sync_Admin_Settings {
         add_settings_field('wechat_sync_use_featured', __('封面图使用特色图', WECHAT_SYNC_TEXTDOMAIN), [__CLASS__, 'render_field_use_featured'], 'wechat-sync-settings', 'wechat_sync_main');
         add_settings_field('wechat_sync_use_first_image', __('封面图使用文章首图（无图则默认）', WECHAT_SYNC_TEXTDOMAIN), [__CLASS__, 'render_field_use_first_image'], 'wechat-sync-settings', 'wechat_sync_main');
         add_settings_field('wechat_sync_process_images', __('处理文内图片', WECHAT_SYNC_TEXTDOMAIN), [__CLASS__, 'render_field_process_images'], 'wechat-sync-settings', 'wechat_sync_main');
+        add_settings_field('wechat_sync_use_regex', __('仅用正则提取图片（不依赖 DOM）', WECHAT_SYNC_TEXTDOMAIN), [__CLASS__, 'render_field_use_regex'], 'wechat-sync-settings', 'wechat_sync_main');
+        add_settings_field('wechat_sync_passthrough', __('原样同步内容（不处理正文）', WECHAT_SYNC_TEXTDOMAIN), [__CLASS__, 'render_field_passthrough'], 'wechat-sync-settings', 'wechat_sync_main');
         add_settings_field('wechat_sync_debug_images', __('图片调试日志', WECHAT_SYNC_TEXTDOMAIN), [__CLASS__, 'render_field_debug_images'], 'wechat-sync-settings', 'wechat_sync_main');
         add_settings_field('wechat_sync_digest_length', __('摘要长度', WECHAT_SYNC_TEXTDOMAIN), [__CLASS__, 'render_field_digest_length'], 'wechat-sync-settings', 'wechat_sync_main');
         add_settings_field('wechat_sync_author_source', __('作者来源', WECHAT_SYNC_TEXTDOMAIN), [__CLASS__, 'render_field_author_source'], 'wechat-sync-settings', 'wechat_sync_main');
@@ -111,6 +115,16 @@ class Wechat_Sync_Admin_Settings {
     public static function render_field_debug_images() {
         $v = get_option('wechat_sync_debug_images', '0');
         echo '<label><input type="checkbox" name="wechat_sync_debug_images" value="1" ' . checked('1', $v, false) . ' /> ' . esc_html(__('记录图片解析与上传映射日志', WECHAT_SYNC_TEXTDOMAIN)) . '</label>';
+    }
+
+    public static function render_field_passthrough() {
+        $v = get_option('wechat_sync_passthrough', '0');
+        echo '<label><input type="checkbox" name="wechat_sync_passthrough" value="1" ' . checked('1', $v, false) . ' /> ' . esc_html(__('不对正文做任何处理，直接同步到公众号', WECHAT_SYNC_TEXTDOMAIN)) . '</label>';
+    }
+
+    public static function render_field_use_regex() {
+        $v = get_option('wechat_sync_use_regex', '0');
+        echo '<label><input type="checkbox" name="wechat_sync_use_regex" value="1" ' . checked('1', $v, false) . ' /> ' . esc_html(__('不使用 DOM，使用正则解析与替换图片', WECHAT_SYNC_TEXTDOMAIN)) . '</label>';
     }
 
     public static function render_field_digest_length() {
