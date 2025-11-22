@@ -435,6 +435,10 @@ class Wechat_Sync_Provider {
 
     private static function normalize_image_for_upload($file, $target = 'uploadimg') {
         $mime = self::get_mime($file);
+        if ($mime === 'image/webp') {
+            $c = self::convert_webp_if_needed($file);
+            if (is_string($c) && file_exists($c)) { $file = $c; $mime = self::get_mime($file); }
+        }
         $allowed_uploadimg = ['image/jpeg','image/png'];
         $allowed_material = ['image/jpeg','image/png','image/gif'];
         $allowed = ($target === 'material') ? $allowed_material : $allowed_uploadimg;
@@ -451,17 +455,21 @@ class Wechat_Sync_Provider {
                 if ($im) {
                     $tmp = tempnam(get_temp_dir(), 'wximg_');
                     if ($prefer_png && function_exists('imagesavealpha') && function_exists('imagepng')) {
+                        $tmp2 = $tmp . '.png';
                         imagesavealpha($im, true);
-                        @imagepng($im, $tmp, 6);
-                        if (file_exists($tmp)) { $file = $tmp; $mime = 'image/png'; }
+                        @imagepng($im, $tmp2, 6);
+                        if (file_exists($tmp2)) { $file = $tmp2; $mime = 'image/png'; }
+                        if (file_exists($tmp)) @unlink($tmp);
                     } else if (function_exists('imagejpeg')) {
+                        $tmp2 = $tmp . '.jpg';
                         $bg = imagecreatetruecolor(imagesx($im), imagesy($im));
                         $white = imagecolorallocate($bg, 255, 255, 255);
                         imagefilledrectangle($bg, 0, 0, imagesx($im), imagesy($im), $white);
                         imagecopy($bg, $im, 0, 0, 0, 0, imagesx($im), imagesy($im));
-                        @imagejpeg($bg, $tmp, 85);
+                        @imagejpeg($bg, $tmp2, 85);
                         imagedestroy($bg);
-                        if (file_exists($tmp)) { $file = $tmp; $mime = 'image/jpeg'; }
+                        if (file_exists($tmp2)) { $file = $tmp2; $mime = 'image/jpeg'; }
+                        if (file_exists($tmp)) @unlink($tmp);
                     }
                     imagedestroy($im);
                 }
@@ -473,11 +481,16 @@ class Wechat_Sync_Provider {
                     $fmt = $prefer_png ? 'png' : 'jpeg';
                     $img->setImageFormat($fmt);
                     $tmp = tempnam(get_temp_dir(), 'wximg_');
-                    $img->writeImage($tmp);
+                    $tmp2 = $tmp . ($prefer_png ? '.png' : '.jpg');
+                    $img->writeImage($tmp2);
                     $img->clear();
                     $img->destroy();
-                    if (file_exists($tmp)) { $file = $tmp; $mime = $prefer_png ? 'image/png' : 'image/jpeg'; }
+                    if (file_exists($tmp2)) { $file = $tmp2; $mime = $prefer_png ? 'image/png' : 'image/jpeg'; }
+                    if (file_exists($tmp)) @unlink($tmp);
                 } catch (Exception $e) {}
+            }
+            if (!in_array($mime, $allowed, true)) {
+                return new WP_Error('wechat_sync_invalid_type', __('文件类型不支持，转换失败', WECHAT_SYNC_TEXTDOMAIN));
             }
         }
         $max = ($target === 'material') ? 2097152 : 2097152;
@@ -489,8 +502,10 @@ class Wechat_Sync_Provider {
                     $q = 80;
                     while ($q >= 50) {
                         $tmp = tempnam(get_temp_dir(), 'wximg_');
-                        @imagejpeg($im, $tmp, $q);
-                        if (file_exists($tmp) && @filesize($tmp) < $max) { @unlink($file); $file = $tmp; break; }
+                        $tmp2 = $tmp . '.jpg';
+                        @imagejpeg($im, $tmp2, $q);
+                        if (file_exists($tmp2) && @filesize($tmp2) < $max) { @unlink($file); $file = $tmp2; if (file_exists($tmp)) @unlink($tmp); break; }
+                        if (file_exists($tmp2)) @unlink($tmp2);
                         if (file_exists($tmp)) @unlink($tmp);
                         $q -= 10;
                     }
@@ -500,10 +515,12 @@ class Wechat_Sync_Provider {
                 $im = @imagecreatefrompng($file);
                 if ($im) {
                     $tmp = tempnam(get_temp_dir(), 'wximg_');
+                    $tmp2 = $tmp . '.png';
                     imagesavealpha($im, true);
-                    @imagepng($im, $tmp, 7);
-                    if (file_exists($tmp) && @filesize($tmp) < $max) { @unlink($file); $file = $tmp; }
-                    else if (file_exists($tmp)) { @unlink($tmp); }
+                    @imagepng($im, $tmp2, 7);
+                    if (file_exists($tmp2) && @filesize($tmp2) < $max) { @unlink($file); $file = $tmp2; }
+                    else if (file_exists($tmp2)) { @unlink($tmp2); }
+                    if (file_exists($tmp)) @unlink($tmp);
                     imagedestroy($im);
                 }
                 $sz = @filesize($file);
@@ -516,10 +533,12 @@ class Wechat_Sync_Provider {
                         imagecopy($bg, $im2, 0, 0, 0, 0, imagesx($im2), imagesy($im2));
                         $q = 80;
                         while ($q >= 50) {
-                            $tmp2 = tempnam(get_temp_dir(), 'wximg_');
+                            $tmp = tempnam(get_temp_dir(), 'wximg_');
+                            $tmp2 = $tmp . '.jpg';
                             @imagejpeg($bg, $tmp2, $q);
-                            if (file_exists($tmp2) && @filesize($tmp2) < $max) { @unlink($file); $file = $tmp2; $mime = 'image/jpeg'; break; }
+                            if (file_exists($tmp2) && @filesize($tmp2) < $max) { @unlink($file); $file = $tmp2; $mime = 'image/jpeg'; if (file_exists($tmp)) @unlink($tmp); break; }
                             if (file_exists($tmp2)) @unlink($tmp2);
+                            if (file_exists($tmp)) @unlink($tmp);
                             $q -= 10;
                         }
                         imagedestroy($bg);
@@ -723,9 +742,11 @@ class Wechat_Sync_Provider {
             $im = @imagecreatefromwebp($file);
             if ($im) {
                 $tmp = tempnam(get_temp_dir(), 'wximg_');
-                @imagejpeg($im, $tmp, 85);
+                $tmp2 = $tmp . '.jpg';
+                @imagejpeg($im, $tmp2, 85);
                 imagedestroy($im);
-                if (file_exists($tmp)) return $tmp;
+                if (file_exists($tmp2)) return $tmp2;
+                if (file_exists($tmp)) @unlink($tmp);
             }
         }
         if (class_exists('Imagick')) {
@@ -733,10 +754,12 @@ class Wechat_Sync_Provider {
                 $img = new Imagick($file);
                 $img->setImageFormat('jpeg');
                 $tmp = tempnam(get_temp_dir(), 'wximg_');
-                $img->writeImage($tmp);
+                $tmp2 = $tmp . '.jpg';
+                $img->writeImage($tmp2);
                 $img->clear();
                 $img->destroy();
-                if (file_exists($tmp)) return $tmp;
+                if (file_exists($tmp2)) return $tmp2;
+                if (file_exists($tmp)) @unlink($tmp);
             } catch (Exception $e) {}
         }
         return $file;
