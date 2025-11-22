@@ -18,6 +18,8 @@ class Wechat_Sync_Admin_Settings {
         register_setting('wechat_sync_settings', 'wechat_sync_default_cover_id');
         register_setting('wechat_sync_settings', 'wechat_sync_log_limit');
         register_setting('wechat_sync_settings', 'wechat_sync_use_system_cron');
+        register_setting('wechat_sync_settings', 'wechat_sync_process_batch');
+        register_setting('wechat_sync_settings', 'wechat_sync_poll_batch');
 
         add_settings_section('wechat_sync_main', __('基本配置', WECHAT_SYNC_TEXTDOMAIN), function(){}, 'wechat-sync-settings');
 
@@ -36,6 +38,8 @@ class Wechat_Sync_Admin_Settings {
         add_settings_field('wechat_sync_default_cover_id', __('默认封面图附件ID', WECHAT_SYNC_TEXTDOMAIN), [__CLASS__, 'render_field_default_cover_id'], 'wechat-sync-settings', 'wechat_sync_main');
         add_settings_field('wechat_sync_log_limit', __('异常日志上限', WECHAT_SYNC_TEXTDOMAIN), [__CLASS__, 'render_field_log_limit'], 'wechat-sync-settings', 'wechat_sync_main');
         add_settings_field('wechat_sync_use_system_cron', __('使用系统级 Cron', WECHAT_SYNC_TEXTDOMAIN), [__CLASS__, 'render_field_use_system_cron'], 'wechat-sync-settings', 'wechat_sync_main');
+        add_settings_field('wechat_sync_process_batch', __('处理并发批量大小', WECHAT_SYNC_TEXTDOMAIN), [__CLASS__, 'render_field_process_batch'], 'wechat-sync-settings', 'wechat_sync_main');
+        add_settings_field('wechat_sync_poll_batch', __('轮询并发批量大小', WECHAT_SYNC_TEXTDOMAIN), [__CLASS__, 'render_field_poll_batch'], 'wechat-sync-settings', 'wechat_sync_main');
         
     }
 
@@ -153,6 +157,18 @@ class Wechat_Sync_Admin_Settings {
         if (!$secret) { $secret = wp_generate_password(32, false); update_option('wechat_sync_cron_secret', $secret, false); }
         $cmd = 'curl -sS -m 60 \'' . esc_url(admin_url('admin-post.php?action=wechat_sync_cron&key=' . rawurlencode($secret))) . '\' > /dev/null 2>&1';
         echo '<p><code>' . esc_html($cmd) . '</code></p>';
+    }
+
+    public static function render_field_process_batch() {
+        $v = esc_attr(get_option('wechat_sync_process_batch', '10'));
+        echo '<input type="number" min="1" max="50" step="1" name="wechat_sync_process_batch" value="' . $v . '" class="small-text" /> ';
+        echo '<span class="description">' . esc_html(__('每次调度批量触发的处理任务数（1-50）', WECHAT_SYNC_TEXTDOMAIN)) . '</span>';
+    }
+
+    public static function render_field_poll_batch() {
+        $v = esc_attr(get_option('wechat_sync_poll_batch', '10'));
+        echo '<input type="number" min="1" max="50" step="1" name="wechat_sync_poll_batch" value="' . $v . '" class="small-text" /> ';
+        echo '<span class="description">' . esc_html(__('每次调度批量触发的轮询任务数（1-50）', WECHAT_SYNC_TEXTDOMAIN)) . '</span>';
     }
 
     

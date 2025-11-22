@@ -38,6 +38,10 @@ class Wechat_Sync_Plugin {
         add_action('admin_notices', [__CLASS__, 'admin_notices']);
         add_action('admin_post_nopriv_wechat_sync_cron', [__CLASS__, 'handle_system_cron']);
         add_action('admin_post_wechat_sync_cron', [__CLASS__, 'handle_system_cron']);
+        add_action('admin_post_nopriv_wechat_sync_worker_process', [__CLASS__, 'handle_worker_process']);
+        add_action('admin_post_wechat_sync_worker_process', [__CLASS__, 'handle_worker_process']);
+        add_action('admin_post_nopriv_wechat_sync_worker_poll', [__CLASS__, 'handle_worker_poll']);
+        add_action('admin_post_wechat_sync_worker_poll', [__CLASS__, 'handle_worker_poll']);
     }
 
     public static function load_textdomain() {
@@ -274,8 +278,12 @@ class Wechat_Sync_Plugin {
 
     public static function run_scheduler() {
         $now = time();
+        $secret = get_option('wechat_sync_cron_secret', '');
+        if (!$secret) { $secret = wp_generate_password(32, false); update_option('wechat_sync_cron_secret', $secret, false); }
+        $pb = max(1, min(50, intval(get_option('wechat_sync_process_batch', '10'))));
+        $lb = max(1, min(50, intval(get_option('wechat_sync_poll_batch', '10'))));
         $q1 = new WP_Query([
-            'post_type'=>'post','post_status'=>'any','posts_per_page'=>5,
+            'post_type'=>'post','post_status'=>'any','posts_per_page'=>$pb,
             'meta_query'=>[
                 ['key'=>'wechat_sync_status','value'=>'排队','compare'=>'='],
                 ['key'=>'wechat_sync_next_attempt','value'=>$now,'compare'=>'<=','type'=>'NUMERIC']
@@ -283,11 +291,11 @@ class Wechat_Sync_Plugin {
             'orderby'=>'date','order'=>'ASC'
         ]);
         foreach($q1->posts as $p){
-            $attempt = intval(get_post_meta($p->ID,'wechat_sync_attempt',true));
-            Wechat_Sync_Queue::process($p->ID, $attempt);
+            $u = admin_url('admin-post.php?action=wechat_sync_worker_process&post_id=' . intval($p->ID) . '&key=' . rawurlencode($secret));
+            wp_remote_post($u, ['timeout' => 0.01, 'blocking' => false]);
         }
         $q2 = new WP_Query([
-            'post_type'=>'post','post_status'=>'any','posts_per_page'=>5,
+            'post_type'=>'post','post_status'=>'any','posts_per_page'=>$pb,
             'meta_query'=>[
                 ['key'=>'wechat_sync_status','value'=>'重试中','compare'=>'='],
                 ['key'=>'wechat_sync_next_attempt','value'=>$now,'compare'=>'<=','type'=>'NUMERIC']
@@ -295,11 +303,11 @@ class Wechat_Sync_Plugin {
             'orderby'=>'date','order'=>'ASC'
         ]);
         foreach($q2->posts as $p){
-            $attempt = intval(get_post_meta($p->ID,'wechat_sync_attempt',true));
-            Wechat_Sync_Queue::process($p->ID, $attempt);
+            $u = admin_url('admin-post.php?action=wechat_sync_worker_process&post_id=' . intval($p->ID) . '&key=' . rawurlencode($secret));
+            wp_remote_post($u, ['timeout' => 0.01, 'blocking' => false]);
         }
         $q3 = new WP_Query([
-            'post_type'=>'post','post_status'=>'any','posts_per_page'=>5,
+            'post_type'=>'post','post_status'=>'any','posts_per_page'=>$lb,
             'meta_query'=>[
                 ['key'=>'wechat_sync_status','value'=>'发布中','compare'=>'='],
                 ['key'=>'wechat_sync_next_poll','value'=>$now,'compare'=>'<=','type'=>'NUMERIC']
@@ -307,9 +315,45 @@ class Wechat_Sync_Plugin {
             'orderby'=>'date','order'=>'ASC'
         ]);
         foreach($q3->posts as $p){
-            $count = intval(get_post_meta($p->ID,'wechat_sync_poll_count',true));
-            Wechat_Sync_Queue::poll($p->ID, $count);
+            $u = admin_url('admin-post.php?action=wechat_sync_worker_poll&post_id=' . intval($p->ID) . '&key=' . rawurlencode($secret));
+            wp_remote_post($u, ['timeout' => 0.01, 'blocking' => false]);
         }
+    }
+
+    public static function handle_worker_process() {
+        $key = isset($_GET['key']) ? sanitize_text_field($_GET['key']) : '';
+        $secret = get_option('wechat_sync_cron_secret', '');
+        if (!$secret) { $secret = wp_generate_password(32, false); update_option('wechat_sync_cron_secret', $secret, false); }
+        if (!current_user_can('manage_options') && $key !== $secret) { status_header(403); echo 'FORBIDDEN'; exit; }
+        $post_id = isset($_GET['post_id']) ? intval($_GET['post_id']) : 0;
+        if (!$post_id) { status_header(400); echo 'NOP'; exit; }
+        $lock_key = 'wechat_sync_post_lock_' . $post_id;
+        if (get_transient($lock_key)) { status_header(200); echo 'LOCK'; exit; }
+        set_transient($lock_key, 1, 120);
+        $attempt = intval(get_post_meta($post_id, 'wechat_sync_attempt', true));
+        Wechat_Sync_Queue::process($post_id, $attempt);
+        delete_transient($lock_key);
+        status_header(200);
+        echo 'OK';
+        exit;
+    }
+
+    public static function handle_worker_poll() {
+        $key = isset($_GET['key']) ? sanitize_text_field($_GET['key']) : '';
+        $secret = get_option('wechat_sync_cron_secret', '');
+        if (!$secret) { $secret = wp_generate_password(32, false); update_option('wechat_sync_cron_secret', $secret, false); }
+        if (!current_user_can('manage_options') && $key !== $secret) { status_header(403); echo 'FORBIDDEN'; exit; }
+        $post_id = isset($_GET['post_id']) ? intval($_GET['post_id']) : 0;
+        if (!$post_id) { status_header(400); echo 'NOP'; exit; }
+        $lock_key = 'wechat_sync_post_lock_poll_' . $post_id;
+        if (get_transient($lock_key)) { status_header(200); echo 'LOCK'; exit; }
+        set_transient($lock_key, 1, 120);
+        $count = intval(get_post_meta($post_id, 'wechat_sync_poll_count', true));
+        Wechat_Sync_Queue::poll($post_id, $count);
+        delete_transient($lock_key);
+        status_header(200);
+        echo 'OK';
+        exit;
     }
 }
 

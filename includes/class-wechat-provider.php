@@ -2,6 +2,10 @@
 if (!defined('ABSPATH')) { exit; }
 
 class Wechat_Sync_Provider {
+    private static function encode_json($data, $flags = 0) {
+        if (function_exists('wp_json_encode')) return wp_json_encode($data, $flags);
+        return json_encode($data, $flags);
+    }
     public static function upload_content_image($file_path, $token) {
         $url = 'https://api.weixin.qq.com/cgi-bin/media/uploadimg?access_token=' . rawurlencode($token);
         $res = self::multipart_request($url, $file_path, 'media');
@@ -301,7 +305,7 @@ class Wechat_Sync_Provider {
         $res = wp_remote_post($url, [
             'timeout' => 30,
             'headers' => ['Content-Type' => 'application/json; charset=utf-8'],
-            'body' => wp_json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+            'body' => self::encode_json($payload, defined('JSON_UNESCAPED_UNICODE') ? (JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : 0),
         ]);
         if (is_wp_error($res)) return $res;
         $body = wp_remote_retrieve_body($res);
@@ -317,7 +321,7 @@ class Wechat_Sync_Provider {
                 $res = wp_remote_post($url, [
                     'timeout' => 30,
                     'headers' => ['Content-Type' => 'application/json; charset=utf-8'],
-                    'body' => wp_json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                    'body' => self::encode_json($payload, defined('JSON_UNESCAPED_UNICODE') ? (JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : 0),
                 ]);
                 if (is_wp_error($res)) return $res;
                 $json = json_decode(wp_remote_retrieve_body($res), true);
@@ -329,7 +333,7 @@ class Wechat_Sync_Provider {
                 $res = wp_remote_post($url, [
                     'timeout' => 30,
                     'headers' => ['Content-Type' => 'application/json; charset=utf-8'],
-                    'body' => wp_json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                    'body' => self::encode_json($payload, defined('JSON_UNESCAPED_UNICODE') ? (JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : 0),
                 ]);
                 if (is_wp_error($res)) return $res;
                 $json = json_decode(wp_remote_retrieve_body($res), true);
@@ -353,7 +357,7 @@ class Wechat_Sync_Provider {
         $res = wp_remote_post($url, [
             'timeout' => 30,
             'headers' => ['Content-Type' => 'application/json; charset=utf-8'],
-            'body' => wp_json_encode(['media_id' => $media_id]),
+            'body' => self::encode_json(['media_id' => $media_id]),
         ]);
         if (is_wp_error($res)) return $res;
         $body = wp_remote_retrieve_body($res);
@@ -380,7 +384,7 @@ class Wechat_Sync_Provider {
         $res = wp_remote_post($url, [
             'timeout' => 20,
             'headers' => ['Content-Type' => 'application/json; charset=utf-8'],
-            'body' => wp_json_encode(['publish_id' => $publish_id]),
+            'body' => self::encode_json(['publish_id' => $publish_id]),
         ]);
         if (is_wp_error($res)) return $res;
         $body = wp_remote_retrieve_body($res);

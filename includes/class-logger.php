@@ -4,12 +4,18 @@ if (!defined('ABSPATH')) { exit; }
 class Wechat_Sync_Logger {
     private static function option_key() { return 'wechat_sync_error_logs'; }
     private static function max_logs() { return max(50, intval(get_option('wechat_sync_log_limit', 500))); }
+    private static function make_id() {
+        if (function_exists('wp_generate_uuid4')) return wp_generate_uuid4();
+        if (function_exists('random_bytes')) { $b = random_bytes(16); $h = bin2hex($b); return substr($h,0,8) . '-' . substr($h,8,4) . '-' . substr($h,12,4) . '-' . substr($h,16,4) . '-' . substr($h,20,12); }
+        $r = function($n){ $s=''; for($i=0;$i<$n;$i++){ $s .= dechex(mt_rand(0,15)); } return $s; };
+        return $r(8) . '-' . $r(4) . '-' . $r(4) . '-' . $r(4) . '-' . $r(12);
+    }
 
     public static function log_error($post_id, $message, $stage, $attempt, $status) {
         $logs = get_option(self::option_key(), []);
         if (!is_array($logs)) $logs = [];
         $entry = [
-            'id' => wp_generate_uuid4(),
+            'id' => self::make_id(),
             'post_id' => intval($post_id),
             'title' => get_the_title($post_id),
             'status' => (string)$status,
